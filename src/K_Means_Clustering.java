@@ -1,5 +1,3 @@
-package Homework1;
-
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.*;
 import org.apache.spark.api.java.function.Function;
@@ -7,7 +5,7 @@ import org.apache.spark.mllib.linalg.Vector;
 import org.apache.spark.mllib.linalg.Vectors;
 import scala.Tuple2;
 
-public class k_means_clustering {
+public class K_Means_Clustering {
 
     public static void main(String[] args) {
         SparkConf conf = new SparkConf().setAppName("KMeansClustering").setMaster("local");
