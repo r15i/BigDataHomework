@@ -9,11 +9,10 @@ import org.apache.spark.mllib.linalg.Vector;
 import org.apache.spark.mllib.linalg.Vectors;
 import scala.Tuple2;
 
+import java.util.*;
+
 import org.apache.log4j.Logger;
 import org.apache.log4j.Level;
-
-
-import java.util.List;
 
 public class K_Means_Clustering {
 
@@ -21,43 +20,33 @@ public class K_Means_Clustering {
         // Suppress Spark logs
         // useful if u dont care about the long infos from the spark service
         Logger.getRootLogger().setLevel(Level.OFF);
-
+        Scanner scanner = new Scanner(System.in); // READ INPUT
         SparkConf conf = new SparkConf().setAppName("KMeansClustering").setMaster("local");
         JavaSparkContext sc = new JavaSparkContext(conf); // connection to Spark
-
-        JavaRDD<String> lines = sc.textFile("uber_small.csv"); // each line becomes a single element in RDD
-
+        // Number of Partitions
+        System.out.print("Enter The Number of Partitions: ");
+        int L = scanner.nextInt();
+        System.out.print("Enter The Number of clusters: ");
+        int K = scanner.nextInt();
+        System.out.print("Enter The Number of Lloyd's iterations: ");
+        int iterations = scanner.nextInt();
+        JavaRDD<String> lines = sc.textFile("uber_small.csv").repartition(L); // each line becomes a single element in RDD
         JavaRDD<Tuple2<Vector, String>> groupRDD = lines.map(
-            new Function<String, Tuple2<Vector, String>>() {
-                public Tuple2<Vector, String> call(String line) {
-                    String[] parts = line.split(",");
-                    double lat = Double.parseDouble(parts[0]);
-                    double lon = Double.parseDouble(parts[1]);
-                    String group = parts[2];
-                    Vector point = Vectors.dense(lat, lon);
-                    return new Tuple2<>(point, group);
-                }
-            }
+                myMethods::LinesToInputPoints
         );
-
-        // print some elements
-         for (Tuple2<Vector, String> tuple : groupRDD.take(5)) {
-             System.out.println("Point: " + tuple._1 + " Group: " + tuple._2);
-         }
-
+        List<Tuple2<String, Integer>> groupCounts = myMethods.CountEachGroup(groupRDD).collect();
+        System.out.println("N => "+ groupRDD.count());
+        for (Tuple2<String, Integer> entry : groupCounts) {
+            System.out.println("N"+ entry._1() + " => " + entry._2());
+        }
         // Extract points as RDD<Vector> for KMeans
         JavaRDD<Vector> pointsRDD = groupRDD.map(Tuple2::_1).cache();
-
-        // KMeans parameters
-        int K = 3;  // Number of clusters
-        int iterations = 10;  // Lloyd's iterations
 
         // Train the KMeans model using Spark's built-in implementation
         KMeansModel model = KMeans.train(pointsRDD.rdd(), K, iterations);
 
         // Get the computed centroids
         Vector[] centroids = model.clusterCenters();
-
         // Compute and print standard objective function Δ(U,C)
         double standardObjective = MRComputeStandardObjective(groupRDD, centroids);
         System.out.println("Standard Objective Function Value: " + standardObjective);
@@ -74,28 +63,14 @@ public class K_Means_Clustering {
     public static double MRComputeStandardObjective(JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
         // Calculate squared distance for each point to the nearest centroid
         // and maps each point to it's distance
-        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(
-                new PairFunction<Tuple2<Vector, String>, String, Double>() {
-                    public Tuple2<String, Double> call(Tuple2<Vector, String> tuple) {
-                        Vector point = tuple._1();
-
-                        // Find the closest centroid
-                        double minDistance = Double.MAX_VALUE;
-                        for (Vector centroid : centroids) {
-                            double dist = Vectors.sqdist(point, centroid);
-                            if (dist < minDistance) {
-                                minDistance = dist;
-                            }
-                        }
-                        return new Tuple2<>(tuple._2(), minDistance);
-                    }
-                });
-
+        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(point ->{
+            return myMethods.GetClosestDistance(point,centroids);});
         // Compute total squared distance for all points (ignoring the group)
         // does reducing part (maps each distances to the sum )
+        long numberOfPoints=groupRDD.count();
         double totalSquaredDistance = distancesRDD.mapToDouble(Tuple2::_2).reduce((a, b) -> a + b);
 
-        return totalSquaredDistance;
+        return totalSquaredDistance/numberOfPoints;
     }
 
 
@@ -105,23 +80,8 @@ public class K_Means_Clustering {
      */
     public static double MRComputeFairObjective(JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
         // Compute (squared distance, group) for each point
-        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(
-            new PairFunction<Tuple2<Vector, String>, String, Double>() {
-                public Tuple2<String, Double> call(Tuple2<Vector, String> tuple) {
-                    Vector point = tuple._1();
-                    String group = tuple._2();
-
-                    // Find closest centroid
-                    double minDistance = Double.MAX_VALUE;
-                    for (Vector centroid : centroids) {
-                        double dist = Vectors.sqdist(point, centroid);
-                        if (dist < minDistance) {
-                            minDistance = dist;
-                        }
-                    }
-                    return new Tuple2<>(group, minDistance);
-                }
-            });
+        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(point ->{
+            return myMethods.GetClosestDistance(point,centroids);});
 
         // Compute total squared distance for each group
         JavaPairRDD<String, Double> totalDistances = distancesRDD.reduceByKey(
@@ -132,17 +92,7 @@ public class K_Means_Clustering {
             });
 
         // Count number of points in each group
-        JavaPairRDD<String, Integer> groupCounts = groupRDD.mapToPair(
-            new PairFunction<Tuple2<Vector, String>, String, Integer>() {
-                public Tuple2<String, Integer> call(Tuple2<Vector, String> tuple) {
-                    return new Tuple2<>(tuple._2(), 1);
-                }
-            }).reduceByKey(
-            new Function2<Integer, Integer, Integer>() {
-                public Integer call(Integer a, Integer b) {
-                    return a + b;
-                }
-            });
+        JavaPairRDD<String, Integer> groupCounts = myMethods.CountEachGroup(groupRDD);
 
         // Collect results
         List<Tuple2<String, Double>> totalDistList = totalDistances.collect();
@@ -163,8 +113,42 @@ public class K_Means_Clustering {
                 }
             }
         }
-
         return Math.max(fairObjectiveA, fairObjectiveB);
+    }
+}
+class myMethods {
+    public static Tuple2<Vector, String> LinesToInputPoints(String line){
+            String[] parts = line.split(",");
+            double lat = Double.parseDouble(parts[0]);
+            double lon = Double.parseDouble(parts[1]);
+            String group = parts[2];
+            Vector point = Vectors.dense(lat, lon);
+            return new Tuple2<>(point, group);
+    }
+    public static Tuple2<String, Double> GetClosestDistance(Tuple2<Vector, String> tuple,Vector[] centroids){
+        Vector point = tuple._1();
+        // Find the closest centroid
+        double minDistance = Double.MAX_VALUE;
+        for (Vector centroid : centroids) {
+            double dist = Vectors.sqdist(point, centroid);
+            if (dist < minDistance) {
+                minDistance = dist;
+            }
+        }
+        return new Tuple2<>(tuple._2(), minDistance);
+    }
+    public static JavaPairRDD<String, Integer> CountEachGroup(JavaRDD<Tuple2<Vector, String>> groupRDD){
+        return groupRDD.mapToPair(
+                new PairFunction<Tuple2<Vector, String>, String, Integer>() {
+                    public Tuple2<String, Integer> call(Tuple2<Vector, String> tuple) {
+                        return new Tuple2<>(tuple._2(), 1);
+                    }
+                }).reduceByKey(
+                new Function2<Integer, Integer, Integer>() {
+                    public Integer call(Integer a, Integer b) {
+                        return a + b;
+                    }
+                });
     }
 }
 
