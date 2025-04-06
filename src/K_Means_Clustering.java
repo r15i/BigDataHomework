@@ -54,7 +54,7 @@ public class K_Means_Clustering {
         // Compute and print fair objective function Φ(A,B,C)
         double fairObjective = MRComputeFairObjective(groupRDD, centroids);
         System.out.println("Fair Objective Function Value: " + fairObjective);
-
+        myMethods.MRPrintStatistics(groupRDD, centroids);
         sc.close();
     }
 
@@ -149,6 +149,34 @@ class myMethods {
                         return a + b;
                     }
                 });
+    }
+    public static void MRPrintStatistics(JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
+        // (centroidIndex, group) -> 1
+        JavaPairRDD<Tuple2<Integer, String>, Integer> groupCountsPerCentroid = groupRDD.mapToPair(point -> {
+            Vector v = point._1();
+            String group = point._2();
+            double minDistance = Double.MAX_VALUE;
+            int closestIndex = -1;
+
+            for (int i = 0; i < centroids.length; i++) {
+                double dist = Vectors.sqdist(v, centroids[i]);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestIndex = i;
+                }
+            }
+
+            return new Tuple2<>(new Tuple2<>(closestIndex, group), 1);
+        }).reduceByKey(Integer::sum);
+
+        // group results by centroid
+        Map<Tuple2<Integer, String>, Integer> result = groupCountsPerCentroid.collectAsMap();
+
+        for (int i = 0; i < centroids.length; i++) {
+            int countA = result.getOrDefault(new Tuple2<>(i, "A"), 0);
+            int countB = result.getOrDefault(new Tuple2<>(i, "B"), 0);
+            System.out.println("Centroid c" + i + " => NA: " + countA + ", NB: " + countB);
+        }
     }
 }
 
