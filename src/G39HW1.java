@@ -14,22 +14,26 @@ import org.apache.log4j.Level;
 public class G39HW1 {
 
     public static void main(String[] args) {
-
-
-
         Logger.getRootLogger().setLevel(Level.OFF);
-        Scanner scanner = new Scanner(System.in);
+        if (args.length < 4) {
+            System.err.println("Usage: KMeansClustering <input_path> <L> <K> <M>");
+            System.exit(1);
+        }
+
+       // NOTE: TO USE COMMAND LINE ARGUMENTS NEED TO  EDIT RUN CONFIGURATION ON INTELLIJ
+
+        String inputPath = args[0];
+        // LEFT FOR DEBUGGING
+        //String inputPath = "uber_small.csv";
+        int L = Integer.parseInt(args[1]); // Number of partitions
+        int K = Integer.parseInt(args[2]); // Number of clusters
+        int iterations = Integer.parseInt(args[3]); // Number of Lloyd's iterations
+
         SparkConf conf = new SparkConf().setAppName("KMeansClustering").setMaster("local");
         JavaSparkContext sc = new JavaSparkContext(conf);
 
-        System.out.print("Enter The Number of Partitions: ");
-        int L = scanner.nextInt();
-        System.out.print("Enter The Number of clusters: ");
-        int K = scanner.nextInt();
-        System.out.print("Enter The Number of Lloyd's iterations: ");
-        int iterations = scanner.nextInt();
+        JavaRDD<String> lines = sc.textFile(inputPath).repartition(L);
 
-        JavaRDD<String> lines = sc.textFile("uber_small.csv").repartition(L);
         JavaRDD<Tuple2<Vector, String>> groupRDD = lines.map(myMethods::LinesToInputPoints);
         List<Tuple2<String, Integer>> groupCounts = myMethods.CountEachGroup(groupRDD).collect();
 
