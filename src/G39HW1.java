@@ -11,9 +11,12 @@ import java.util.*;
 import org.apache.log4j.Logger;
 import org.apache.log4j.Level;
 
-public class K_Means_Clustering {
+public class G39HW1 {
 
     public static void main(String[] args) {
+
+
+
         Logger.getRootLogger().setLevel(Level.OFF);
         Scanner scanner = new Scanner(System.in);
         SparkConf conf = new SparkConf().setAppName("KMeansClustering").setMaster("local");
