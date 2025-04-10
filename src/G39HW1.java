@@ -27,46 +27,46 @@ public class G39HW1 {
         //String inputPath = "uber_small.csv";
         int L = Integer.parseInt(args[1]); // Number of partitions
         int K = Integer.parseInt(args[2]); // Number of clusters
-        int iterations = Integer.parseInt(args[3]); // Number of Lloyd's iterations
+        int M = Integer.parseInt(args[3]); // Number of Lloyd's iterations
 
         SparkConf conf = new SparkConf().setAppName("KMeansClustering").setMaster("local");
         JavaSparkContext sc = new JavaSparkContext(conf);
 
         JavaRDD<String> lines = sc.textFile(inputPath).repartition(L);
 
-        JavaRDD<Tuple2<Vector, String>> groupRDD = lines.map(myMethods::LinesToInputPoints).cache();
-        List<Tuple2<String, Integer>> groupCounts = myMethods.CountEachGroup(groupRDD).collect();
+        JavaRDD<Tuple2<Vector, String>> inputPoints = lines.map(myMethods::LinesToInputPoints).cache();
+        List<Tuple2<String, Integer>> groupCounts = myMethods.CountEachGroup(inputPoints).collect();
 
-        JavaRDD<Vector> pointsRDD = groupRDD.map(Tuple2::_1);
-        KMeansModel model = KMeans.train(pointsRDD.rdd(), K, iterations);
-        Vector[] centroids = model.clusterCenters();
+        JavaRDD<Vector> pointsRDD = inputPoints.map(Tuple2::_1);
+        KMeansModel model = KMeans.train(pointsRDD.rdd(), K, M);
+        Vector[] C = model.clusterCenters();
 
-        double standardObjective = MRComputeStandardObjective(groupRDD, centroids);
-        double fairObjective = MRComputeFairObjective(groupRDD, centroids);
+        double standardObjective = MRComputeStandardObjective(inputPoints, C);
+        double fairObjective = MRComputeFairObjective(inputPoints, C);
 
-        System.out.println("Input file = "+ inputPath +", L = " + L + ", K = " + K + ", M = " + iterations);
-        long N = groupRDD.count();
+        System.out.println("Input file = "+ inputPath +", L = " + L + ", K = " + K + ", M = " + M);
+        long N = inputPoints.count();
         long NA = groupCounts.stream().filter(t -> t._1().equals("A")).mapToLong(Tuple2::_2).sum();
         long NB = groupCounts.stream().filter(t -> t._1().equals("B")).mapToLong(Tuple2::_2).sum();
         System.out.println("N = " + N + ", NA = " + NA + ", NB = " + NB);
         System.out.printf("Delta(U,C) = %.6f\n", standardObjective);
         System.out.printf("Phi(A,B,C) = %.6f\n", fairObjective);
 
-        MRPrintStatistics(groupRDD, centroids);
+        MRPrintStatistics(inputPoints, C);
 
         sc.close();
     }
 
-    public static double MRComputeStandardObjective(JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
-        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(point -> myMethods.GetClosestDistance(point, centroids));
-        long numberOfPoints = groupRDD.count();
+    public static double MRComputeStandardObjective(JavaRDD<Tuple2<Vector, String>> inputPoints, Vector[] C) {
+        JavaPairRDD<String, Double> distancesRDD = inputPoints.mapToPair(point -> myMethods.GetClosestDistance(point, C));
+        long numberOfPoints = inputPoints.count();
         double totalSquaredDistance = distancesRDD.mapToDouble(Tuple2::_2).reduce(Double::sum);
         return totalSquaredDistance / numberOfPoints;
     }
-    public static double MRComputeFairObjective(JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
-        JavaPairRDD<String, Double> distancesRDD = groupRDD.mapToPair(point -> myMethods.GetClosestDistance(point, centroids));
+    public static double MRComputeFairObjective(JavaRDD<Tuple2<Vector, String>> inputPoints, Vector[] C) {
+        JavaPairRDD<String, Double> distancesRDD = inputPoints.mapToPair(point -> myMethods.GetClosestDistance(point, C));
         JavaPairRDD<String, Double> totalDistances = distancesRDD.reduceByKey(Double::sum);
-        JavaPairRDD<String, Integer> groupCounts = myMethods.CountEachGroup(groupRDD);
+        JavaPairRDD<String, Integer> groupCounts = myMethods.CountEachGroup(inputPoints);
 
         List<Tuple2<String, Double>> totalDistList = totalDistances.collect();
         List<Tuple2<String, Integer>> countList = groupCounts.collect();
@@ -88,14 +88,14 @@ public class G39HW1 {
         }
         return Math.max(fairObjectiveA, fairObjectiveB);
     }
-    public static void MRPrintStatistics (JavaRDD<Tuple2<Vector, String>> groupRDD, Vector[] centroids) {
-        Map<Tuple2<Integer, String>, Integer> centroidGroupCounts = groupRDD.mapToPair(point -> {
+    public static void MRPrintStatistics (JavaRDD<Tuple2<Vector, String>> inputPoints, Vector[] C) {
+        Map<Tuple2<Integer, String>, Integer> centroidGroupCounts = inputPoints.mapToPair(point -> {
             Vector v = point._1();
             String group = point._2();
             double minDistance = Double.MAX_VALUE;
             int closestIndex = -1;
-            for (int i = 0; i < centroids.length; i++) {
-                double dist = Vectors.sqdist(v, centroids[i]);
+            for (int i = 0; i < C.length; i++) {
+                double dist = Vectors.sqdist(v, C[i]);
                 if (dist < minDistance) {
                     minDistance = dist;
                     closestIndex = i;
@@ -104,10 +104,10 @@ public class G39HW1 {
             return new Tuple2<>(new Tuple2<>(closestIndex, group), 1);
         }).reduceByKey(Integer::sum).collectAsMap();
 
-        for (int i = 0; i < centroids.length; i++) {
+        for (int i = 0; i < C.length; i++) {
             int countA = centroidGroupCounts.getOrDefault(new Tuple2<>(i, "A"), 0);
             int countB = centroidGroupCounts.getOrDefault(new Tuple2<>(i, "B"), 0);
-            System.out.printf("i = %d, center = (%.6f,%.6f), NA%d = %d, NB%d = %d\n", i, centroids[i].apply(0), centroids[i].apply(1), i, countA, i, countB);
+            System.out.printf("i = %d, center = (%.6f,%.6f), NA%d = %d, NB%d = %d\n", i, C[i].apply(0), C[i].apply(1), i, countA, i, countB);
         }
     }
 }
@@ -122,10 +122,10 @@ class myMethods {
         return new Tuple2<>(point, group);
     }
 
-    public static Tuple2<String, Double> GetClosestDistance(Tuple2<Vector, String> tuple, Vector[] centroids) {
+    public static Tuple2<String, Double> GetClosestDistance(Tuple2<Vector, String> tuple, Vector[] C) {
         Vector point = tuple._1();
         double minDistance = Double.MAX_VALUE;
-        for (Vector centroid : centroids) {
+        for (Vector centroid : C) {
             double dist = Vectors.sqdist(point, centroid);
             if (dist < minDistance) {
                 minDistance = dist;
@@ -134,8 +134,8 @@ class myMethods {
         return new Tuple2<>(tuple._2(), minDistance);
     }
 
-    public static JavaPairRDD<String, Integer> CountEachGroup(JavaRDD<Tuple2<Vector, String>> groupRDD) {
-        return groupRDD.mapToPair(
+    public static JavaPairRDD<String, Integer> CountEachGroup(JavaRDD<Tuple2<Vector, String>> inputPoints) {
+        return inputPoints.mapToPair(
                 new PairFunction<Tuple2<Vector, String>, String, Integer>() {
                     public Tuple2<String, Integer> call(Tuple2<Vector, String> tuple) {
                         return new Tuple2<>(tuple._2(), 1);
